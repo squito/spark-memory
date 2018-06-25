@@ -30,8 +30,13 @@ class SparkMemoryManagerHandle(
     // This is totally hacking into internals, even locks ...
     import Reflector._
     lock.synchronized {
-      val taskMem = executionMemoryPool.reflectField("memoryForTask").asInstanceOf[Map[Long, Long]]
-      taskMem.values.max
+      val taskMem = executionMemoryPool
+        .reflectField("memoryForTask").asInstanceOf[scala.collection.Map[Long, Long]]
+      if (taskMem.nonEmpty) {
+        taskMem.values.max
+      } else {
+        0L
+      }
     }
   }
 }
@@ -56,7 +61,7 @@ object SparkMemoryManagerHandle {
       None
   }
 
-  def assertNoDynamicAllocation(sc: SparkContext): Unit = {
-    assert(!org.apache.spark.util.Utils.isDynamicAllocationEnabled(sc.getConf))
+  def isDynamicAllocation(sc: SparkContext): Boolean = {
+    org.apache.spark.util.Utils.isDynamicAllocationEnabled(sc.getConf)
   }
 }

@@ -215,14 +215,22 @@ object MemoryMonitor {
     }
   }
 
+  def installOnExecIfStaticAllocation(sc: SparkContext): Unit = {
+    if (!SparkMemoryManagerHandle.isDynamicAllocation(sc)) {
+      installOnExecutors(sc)
+    } else {
+      println ("********* WARNING ***** not installing on executors because of DA")
+    }
+  }
 
   def installOnExecutors(sc: SparkContext, numTasks: Int = -1, sleep: Long = 1): Unit = {
-    SparkMemoryManagerHandle.assertNoDynamicAllocation(sc)
+    assert(!SparkMemoryManagerHandle.isDynamicAllocation(sc))
     val t = if (numTasks == -1) {
-      sc.getExecutorMemoryStatus.size
+      sc.getExecutorMemoryStatus.size * 2
     } else {
       numTasks
     }
+    println(s"Running $t tasks to install memory monitor on executors")
     sc.parallelize(1 to t, t).foreach { _ =>
       Thread.sleep(sleep)
       installIfSysProps()
