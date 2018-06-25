@@ -11,7 +11,7 @@ Include that jar in your spark application.  You could bundle it directly, or ju
 The monitoring is configured via java system properties:
 
 * "memory.monitor.enabled" -- if its set, enable monitoring (regardless of value)
-* "memory.monitor.freq=<millis>" -- set the frequency of polling used to detect peaks, in millis
+* "memory.monitor.freq=[millis]" -- set the frequency of polling used to detect peaks, in millis
 
 So a typical invocation might look like:
 
