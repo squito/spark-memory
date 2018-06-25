@@ -10,9 +10,11 @@ import io.netty.channel.ChannelOption
 
 import org.apache.spark.SparkEnv
 
+import scala.util.Try
+
 class SparkNettyMemoryHandle(
   val rpcClientPool: PooledByteBufAllocatorMetric,
-  val rpcServerPool: PooledByteBufAllocatorMetric,
+  val rpcServerPool: Option[PooledByteBufAllocatorMetric],
   val blockClientPool: PooledByteBufAllocatorMetric,
   val blockServerPool: PooledByteBufAllocatorMetric
 ) extends MemoryGetter {
@@ -38,12 +40,22 @@ class SparkNettyMemoryHandle(
     client <- Seq("client", "server")
     (metric, reporting) <- allPooledMetrics
   } yield {
-    ("netty-" + pool + "-" + client + "-" + metric, reporting)
-  }) ++ Seq(("netty-Unpooled-heapUsed", IncrementBytes), ("netty-Unpooled-directUsed", IncrementBytes))
+    if (rpcServerPool.isDefined || pool != "rpc" || client != "server") {
+      Some(("netty-" + pool + "-" + client + "-" + metric, reporting))
+    } else {
+      None
+    }
+  }).flatten ++ Seq(("netty-Unpooled-heapUsed", IncrementBytes), ("netty-Unpooled-directUsed", IncrementBytes))
+
+  val pools: Seq[PooledByteBufAllocatorMetric] = if (rpcServerPool.isDefined) {
+    Seq(rpcClientPool, rpcServerPool.get, blockClientPool, blockServerPool)
+  } else {
+    Seq(rpcClientPool, blockClientPool, blockServerPool)
+  }
 
   def values(dest: Array[Long], initOffset: Int): Unit = {
     var offset = initOffset
-    Seq(rpcClientPool, rpcServerPool, blockClientPool, blockServerPool).foreach { pool =>
+    pools.foreach { pool =>
       dest(offset) = pool.usedHeapMemory()
       dest(offset + 1) = pool.usedDirectMemory()
       dest(offset + 2) = pool.numHeapArenas()
@@ -69,13 +81,13 @@ object SparkNettyMemoryHandle {
     val env = SparkEnv.get
     Some(new SparkNettyMemoryHandle(
       getRpcClientPooledAllocator(env).metric,
-      getRpcServerPooledAllocator(env).metric,
+      Try(getRpcServerPooledAllocator(env).metric).toOption,
       getBlockTransferServiceClientPooledAllocator(env).metric,
       getBlockTransferServiceServerPooledAllocator(env).metric
     ))
   } catch {
     case ex: Exception =>
-      if (displayError) {
+      if (displayError || sys.props.get("memory.monitor.verbose").isDefined) {
         ex.printStackTrace()
       }
       None
