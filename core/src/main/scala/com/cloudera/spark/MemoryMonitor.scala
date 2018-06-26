@@ -345,3 +345,9 @@ class BufferPoolGetter(bean: BufferPoolMXBean) extends MemoryGetter {
     dest(offset + 1) = bean.getMemoryUsed()
   }
 }
+
+class MemoryMonitorExecutorExtension {
+  // the "extension class" api just lets you invoke a constructor.  We really just want to
+  // call this static method, so that's good enough.
+  MemoryMonitor.installIfSysProps()
+}

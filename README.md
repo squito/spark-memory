@@ -21,8 +21,11 @@ spark-submit \
  --jars spark-memory-core_2.11-0.1.0-SNAPSHOT-jar-with-dependencies.jar \
  --driver-java-options "-XX:MaxMetaspaceSize=200M -XX:+PrintGCDetails -Dmemory.monitor.enabled -Dmemory.monitor.freq=100" \
  --conf spark.executor.extraJavaOptions="-XX:MaxMetaspaceSize=200M -XX:+PrintGCDetails -Dmemory.monitor.enabled -Dmemory.monitor.freq=100" \
+  --conf spark.executor.plugins="com.cloudera.spark.MemoryMonitorExecutorExtension" \
  ...
 ```
+
+This includes the Dynamic Allocation "plugin" (see below) -- note that requires a patched spark and the api may change.
 
 You *also* have to modify the code of your job itself to turn it on.  Below are code samples (using reflection so your
 build doesn't need to know about the memory monitor at all).
@@ -59,6 +62,19 @@ sys.props.get("memory.monitor.enabled").foreach { _ =>
 }
 ```
 
+Installing on Executors, with DynamicAllocation, and "Plugin"
+-------------------------------------------------------------
+
+Its trickier to get the MemoryMonitor installed on the executors with DynamicAllocation.  Executors can come and go at any time,
+and we don't have a good way to initialize something before the first task is run.
+
+You can modify spark to expose some sort of "executor-plugin api", like [this](https://github.com/squito/spark/commit/0ca94828e88006d2efeed6d106f4f0495cf3f5ee).
+(Hopefully this can be exposed as part of spark eventually, I'll open a jira once I think about the api a little more.)
+Then you'd reference the MemoryMonitor as an extension class:
+
+```
+--conf spark.executor.plugins="com.cloudera.spark.MemoryMonitorExecutorExtension"
+```
 
 Understanding the Output
 =========================
