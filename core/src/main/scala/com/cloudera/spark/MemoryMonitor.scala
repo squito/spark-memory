@@ -1,18 +1,22 @@
 // (c) Copyright 2018 Cloudera, Inc. All rights reserved.
 package com.cloudera.spark
 
-import java.lang.management.{MemoryPoolMXBean, MemoryMXBean, BufferPoolMXBean, ManagementFactory}
+import java.lang.management._
 import java.math.{RoundingMode, MathContext}
+import java.text.SimpleDateFormat
 import java.util.Locale
+import java.util.concurrent.atomic.{AtomicBoolean, AtomicReference}
 import java.util.concurrent.{ThreadFactory, TimeUnit, ScheduledThreadPoolExecutor}
-
-import org.apache.spark.memory.SparkMemoryManagerHandle
 
 import scala.collection.JavaConverters._
 
-import org.apache.spark.SparkContext
+import com.quantifind.sumac.FieldArgs
 
-class MemoryMonitor {
+import org.apache.spark.{TaskContext, SparkContext}
+import org.apache.spark.executor.ExecutorPlugin
+import org.apache.spark.memory.SparkMemoryManagerHandle
+
+class MemoryMonitor(val args: MemoryMonitorArgs) {
   val nettyMemoryHandle = SparkNettyMemoryHandle.get()
   val sparkMemManagerHandle = SparkMemoryManagerHandle.get()
   val memoryBean = ManagementFactory.getMemoryMXBean
@@ -50,6 +54,12 @@ class MemoryMonitor {
 
   val peakMemoryUsage = new MemoryPeaks(nMetrics)
   val peakUpdates = new PeakUpdate(nMetrics)
+  val lastNonShutdownSnapshot = new AtomicReference[MemorySnapshot]()
+  val lastThreadDump = new AtomicReference[Array[ThreadInfo]]()
+  val inShutdown = new AtomicBoolean(false)
+
+  private val dateFormat = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS")
+
 
   def showMetricNames: Unit = {
     println(s"${nMetrics} Metrics")
@@ -62,11 +72,19 @@ class MemoryMonitor {
     getterAndOffset.foreach { case (g, offset) =>
       g.values(values, offset)
     }
-    new MemorySnapshot(now, values)
+    val s = new MemorySnapshot(now, values)
+    if (!inShutdown.get()) {
+      lastNonShutdownSnapshot.set(s)
+      if (args.threadDumpEnabled) {
+        lastThreadDump.set(MemoryMonitor.getThreadInfo)
+        showLastThreadDump
+      }
+    }
+    s
   }
 
   def showSnapshot(mem: MemorySnapshot): Unit = {
-    println(s"Mem usage at ${new java.util.Date(mem.time)}")
+    println(s"Mem usage at ${dateFormat.format(mem.time)}")
     println("===============")
     // TODO headers for each getter?
     (0 until nMetrics).foreach { idx =>
@@ -80,12 +98,12 @@ class MemoryMonitor {
   def updateAndMaybeShowPeaks(): Unit = {
     val snapshot = collectSnapshot
     if (peakMemoryUsage.update(snapshot, peakUpdates, reporting)) {
-      showUpdates(peakMemoryUsage, peakUpdates)
+      showUpdates(snapshot.time, peakMemoryUsage, peakUpdates)
     }
   }
 
-  def showUpdates(peakMemory: MemoryPeaks, updates: PeakUpdate): Unit = {
-    println(s"Peak Memory updates:${new java.util.Date(System.currentTimeMillis())}")
+  def showUpdates(time: Long, peakMemory: MemoryPeaks, updates: PeakUpdate): Unit = {
+    println(s"Peak Memory updates:${dateFormat.format(time)}")
     (0 until updates.nUpdates).foreach { updateIdx =>
       val metricIdx = updates.updateIdx(updateIdx)
       val name = names(metricIdx)
@@ -96,12 +114,12 @@ class MemoryMonitor {
     }
   }
 
-  def showPeaks(): Unit = {
-    println(s"Peak Memory usage so far ${new java.util.Date(System.currentTimeMillis())}")
+  def showPeaks(time: Long): Unit = {
+    println(s"Peak Memory usage so far ${dateFormat.format(time)}")
     // TODO headers for each getter?
     (0 until nMetrics).foreach { idx =>
       println(names(idx) + "\t:" + MemoryMonitor.bytesToString(peakMemoryUsage.values(idx)) +
-        "\t\t\t\t" + new java.util.Date(peakMemoryUsage.peakTimes(idx)))
+        "\t\t\t\t" + dateFormat.format(peakMemoryUsage.peakTimes(idx)))
     }
   }
 
@@ -109,14 +127,37 @@ class MemoryMonitor {
     showSnapshot(collectSnapshot)
   }
 
+  def showLastThreadDump: Unit = {
+    val threads = lastThreadDump.get()
+    if (threads != null) {
+      println("last thread dump:")
+      threads.foreach { t =>
+        if (t == null) {
+          println("<null thread>")
+        } else {
+          println(t.getThreadId + " " + t.getThreadName + " " + t.getThreadState)
+          t.getStackTrace.foreach { elem => println("\t" + elem) }
+          println()
+        }
+      }
+    }
+  }
+
   def installShutdownHook: Unit = {
     Runtime.getRuntime.addShutdownHook(new Thread(){
       override def run(): Unit = {
+        inShutdown.set(true)
+        println()
         println("IN SHUTDOWN")
+        println("================")
         val snapshot = collectSnapshot
         showSnapshot(snapshot)
         peakMemoryUsage.update(snapshot, peakUpdates, reporting)
-        showPeaks()
+        showPeaks(snapshot.time)
+        println("Last non-shutdown snapshot:")
+        showSnapshot(lastNonShutdownSnapshot.get())
+
+        showLastThreadDump
       }
     })
   }
@@ -152,9 +193,9 @@ object MemoryMonitor {
   private var monitor: MemoryMonitor = null
   private var shutdownHookInstalled = false
   private var scheduler: ScheduledThreadPoolExecutor = _
-  def install(): MemoryMonitor = synchronized {
+  def install(args: MemoryMonitorArgs): MemoryMonitor = synchronized {
     if (monitor == null) {
-      monitor = new MemoryMonitor()
+      monitor = new MemoryMonitor(args)
     }
     monitor
   }
@@ -166,7 +207,7 @@ object MemoryMonitor {
     }
   }
 
-  def startPolling(millis: Long): Unit = synchronized {
+  def startPolling(args: MemoryMonitorArgs): Unit = synchronized {
     if (scheduler == null) {
       scheduler = new ScheduledThreadPoolExecutor(1, new ThreadFactory {
         override def newThread(r: Runnable): Thread = {
@@ -178,13 +219,13 @@ object MemoryMonitor {
     }
     scheduler.scheduleWithFixedDelay(new Runnable {
       override def run(): Unit = {
-        if (sys.props.get("memory.monitor.all").isDefined) {
+        if (args.showEverySnapshot) {
           monitor.showCurrentMemUsage
         } else {
           monitor.updateAndMaybeShowPeaks
         }
       }
-    }, 0, millis, TimeUnit.MILLISECONDS)
+    }, 0, args.freq.get, TimeUnit.MILLISECONDS)
   }
 
   def listAllMBeans: Unit = {
@@ -202,15 +243,16 @@ object MemoryMonitor {
     println("Runtime.getRuntime.maxMemory(): " + Runtime.getRuntime.maxMemory())
   }
 
-  def installIfSysProps(): Option[Any] = {
-    sys.props.get("memory.monitor.enabled").flatMap { _ =>
-      install()
+  def installIfSysProps(): Unit = {
+    val args = MemoryMonitorArgs.sysPropsArgs
+    if (args.enabled) {
+      install(args)
       installShutdownHook()
-      sys.props.get("memory.monitor.freq").map { freq =>
+      args.freq.foreach { freq =>
         println(s"POLLING memory monitor every $freq millis")
         monitor.showCurrentMemUsage
         println("done with initial show")
-        startPolling(freq.toLong)
+        startPolling(args)
       }
     }
   }
@@ -273,6 +315,12 @@ object MemoryMonitor {
       }
       "%.1f %s".formatLocal(Locale.US, value, unit)
     }
+  }
+
+  def getThreadInfo: Array[ThreadInfo] = {
+    // I'm avoiding getting locks for the moment in a random hope that it might be faster,
+    // and because I don't really care right now
+    ManagementFactory.getThreadMXBean.dumpAllThreads(false, false)
   }
 
 }
@@ -346,8 +394,43 @@ class BufferPoolGetter(bean: BufferPoolMXBean) extends MemoryGetter {
   }
 }
 
-class MemoryMonitorExecutorExtension {
+class MemoryMonitorExecutorExtension extends ExecutorPlugin {
   // the "extension class" api just lets you invoke a constructor.  We really just want to
   // call this static method, so that's good enough.
   MemoryMonitor.installIfSysProps()
+  val args = MemoryMonitorArgs.sysPropsArgs
+
+  override def taskStart(taskContext: TaskContext): Unit = {}
+
+  override def onTaskFailure(context: TaskContext, error: Throwable): Unit = {}
+
+  override def onTaskCompletion(context: TaskContext): Unit = {}
+}
+
+class MemoryMonitorArgs extends FieldArgs {
+  var enabled = false
+  // java.lang.Long because scalac makes Option[Long] look like Option[Any] to java reflection
+  var freq: Option[java.lang.Long] = None
+  var showEverySnapshot = false
+
+  var stagesToPoll: Array[Int] = _
+
+  var threadDumpFreqMillis: Int = 1000
+  var threadDumpEnabled = false
+}
+
+object MemoryMonitorArgs {
+  val prefix = "memory.monitor."
+  val prefixLen = prefix.length
+
+  lazy val sysPropsArgs = {
+    val args = new MemoryMonitorArgs
+    args.parse(sys.props.collect { case (k,v) if k.startsWith(prefix) =>
+        k.substring(prefixLen) -> v
+    })
+    if (args.stagesToPoll != null && args.stagesToPoll.nonEmpty) {
+      System.out.println(s"will poll thread dumps for stages ${args.stagesToPoll.mkString(",")}")
+    }
+    args
+  }
 }

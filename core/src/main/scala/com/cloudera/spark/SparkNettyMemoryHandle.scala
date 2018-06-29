@@ -87,6 +87,7 @@ object SparkNettyMemoryHandle {
     ))
   } catch {
     case ex: Exception =>
+      // TODO get rid of this ...
       if (displayError || sys.props.get("memory.monitor.verbose").isDefined) {
         ex.printStackTrace()
       }

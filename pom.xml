@@ -31,6 +31,13 @@
 
   <dependencies>
     <dependency>
+      <!-- arg parsing -->
+      <groupId>com.quantifind</groupId>
+      <artifactId>sumac_2.11</artifactId>
+      <version>0.3.0</version>
+    </dependency>
+
+    <dependency>
       <groupId>org.scala-lang</groupId>
       <artifactId>scala-library</artifactId>
       <version>${scala.version}</version>
@@ -42,6 +49,7 @@
       <version>2.3.0</version>
       <scope>provided</scope>
     </dependency>
+
     <dependency>
       <groupId>org.scalatest</groupId>
       <artifactId>scalatest_2.11</artifactId>

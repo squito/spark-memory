@@ -13,7 +13,9 @@ object MemExample {
     println(ManagementFactory.getRuntimeMXBean.getVmVersion)
     MemoryMonitor.listAllMBeans
     MemoryMonitor.showLimits
-    val monitor = new MemoryMonitor()
+    val args = new MemoryMonitorArgs
+    val monitor = new MemoryMonitor(args)
+    monitor.installShutdownHook
     monitor.beanInfo()
     monitor.showMetricNames
     monitor.showCurrentMemUsage
