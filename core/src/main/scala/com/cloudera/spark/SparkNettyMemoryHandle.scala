@@ -16,13 +16,15 @@ class SparkNettyMemoryHandle(
   val rpcClientPool: PooledByteBufAllocatorMetric,
   val rpcServerPool: Option[PooledByteBufAllocatorMetric],
   val blockClientPool: PooledByteBufAllocatorMetric,
-  val blockServerPool: PooledByteBufAllocatorMetric
+  val blockServerPool: PooledByteBufAllocatorMetric,
+  val externalShuffleClientPool: Option[PooledByteBufAllocatorMetric]
 ) extends MemoryGetter {
   override def toString(): String = {
     "RPC Client pool:" + rpcClientPool + "\n" +
       "RPC Server pool:" + rpcServerPool + "\n" +
       "Block Transfer client pool:" + blockClientPool + "\n" +
-      "Block Transfer server pool:" + blockServerPool
+      "Block Transfer server pool:" + blockServerPool + "\n" +
+      "External Shuffle Client pool:" + externalShuffleClientPool
   }
 
   val poolMetrics = Seq(
@@ -35,23 +37,25 @@ class SparkNettyMemoryHandle(
   val allPooledMetrics = poolMetrics ++ SparkNettyMemoryHandle.VERBOSE_METRICS ++
     Seq(("directAllocatedUnused", IncrementBytes), ("heapAllocationUnused", IncrementBytes))
 
-  val namesAndReporting: Seq[(String, PeakReporting)] = (for {
-    pool <- Seq("rpc", "blockTransfer")
-    client <- Seq("client", "server")
+  val poolsAndNames: Seq[(PooledByteBufAllocatorMetric, String)] = Seq(
+    Some(rpcClientPool, "rpc-client"),
+    rpcServerPool.map((_, "rpc-server")),
+    Some(blockClientPool, "blockTransfer-client"),
+    Some(blockServerPool, "blockTransfer-server"),
+    externalShuffleClientPool.map((_, "external-shuffle-client"))
+  ).flatten
+
+  val pools = poolsAndNames.map(_._1)
+
+  override val namesAndReporting: Seq[(String, PeakReporting)] = (for {
+    (_, poolName) <- poolsAndNames
     (metric, reporting) <- allPooledMetrics
   } yield {
-    if (rpcServerPool.isDefined || pool != "rpc" || client != "server") {
-      Some(("netty-" + pool + "-" + client + "-" + metric, reporting))
-    } else {
-      None
-    }
-  }).flatten ++ Seq(("netty-Unpooled-heapUsed", IncrementBytes), ("netty-Unpooled-directUsed", IncrementBytes))
-
-  val pools: Seq[PooledByteBufAllocatorMetric] = if (rpcServerPool.isDefined) {
-    Seq(rpcClientPool, rpcServerPool.get, blockClientPool, blockServerPool)
-  } else {
-    Seq(rpcClientPool, blockClientPool, blockServerPool)
-  }
+      ("netty-" + poolName + "-" + metric, reporting)
+  }) ++ Seq(
+    ("netty-Unpooled-heapUsed", IncrementBytes),
+    ("netty-Unpooled-directUsed", IncrementBytes)
+  )
 
   def values(dest: Array[Long], initOffset: Int): Unit = {
     var offset = initOffset
@@ -78,26 +82,32 @@ class SparkNettyMemoryHandle(
 object SparkNettyMemoryHandle {
 
   def get(displayError: Boolean = false): Option[SparkNettyMemoryHandle] = try {
-    val env = SparkEnv.get
-    Some(new SparkNettyMemoryHandle(
-      getRpcClientPooledAllocator(env).metric,
-      Try(getRpcServerPooledAllocator(env).metric).toOption,
-      getBlockTransferServiceClientPooledAllocator(env).metric,
-      getBlockTransferServiceServerPooledAllocator(env).metric
-    ))
-  } catch {
-    case ex: Exception =>
-      // TODO get rid of this ...
-      if (displayError || sys.props.get("memory.monitor.verbose").isDefined) {
-        ex.printStackTrace()
-      }
-      None
+    Option(SparkEnv.get).map { env =>
+      new SparkNettyMemoryHandle(
+        getRpcClientPooledAllocator(env).metric,
+        Try(getRpcServerPooledAllocator(env).metric).toOption,
+        getBlockTransferServiceClientPooledAllocator(env).metric,
+        getBlockTransferServiceServerPooledAllocator(env).metric,
+        getExternalShuffleServiceClientPooledAllocator(env).map(_.metric)
+      )
+    }
   }
 
   def getBlockTransferServiceClientPooledAllocator(env: SparkEnv): PooledByteBufAllocator = {
     import Reflector._
     val ftory = env.blockManager.reflectField("blockTransferService").reflectField("clientFactory")
     getPooledAllocatorFromClientFactory(ftory)
+  }
+
+  def getExternalShuffleServiceClientPooledAllocator(env: SparkEnv): Option[PooledByteBufAllocator] = {
+    import Reflector._
+    val shuffleClient = env.blockManager.reflectField("shuffleClient")
+    println(s"shuffleClient = $shuffleClient (${shuffleClient.getClass()})")
+    if (shuffleClient.getClass().getSimpleName.endsWith("ExternalShuffleClient")) {
+      Some(getPooledAllocatorFromClientFactory(shuffleClient.reflectField("clientFactory")))
+    } else {
+      None
+    }
   }
 
   def getBlockTransferServiceServerPooledAllocator(env: SparkEnv): PooledByteBufAllocator = {

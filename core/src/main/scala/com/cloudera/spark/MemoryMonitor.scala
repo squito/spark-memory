@@ -5,8 +5,8 @@ import java.lang.management._
 import java.math.{RoundingMode, MathContext}
 import java.text.SimpleDateFormat
 import java.util.Locale
-import java.util.concurrent.atomic.{AtomicBoolean, AtomicReference}
-import java.util.concurrent.{ThreadFactory, TimeUnit, ScheduledThreadPoolExecutor}
+import java.util.concurrent.atomic.{AtomicInteger, AtomicBoolean, AtomicReference}
+import java.util.concurrent._
 
 import scala.collection.JavaConverters._
 
@@ -58,9 +58,6 @@ class MemoryMonitor(val args: MemoryMonitorArgs) {
   val lastThreadDump = new AtomicReference[Array[ThreadInfo]]()
   val inShutdown = new AtomicBoolean(false)
 
-  private val dateFormat = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS")
-
-
   def showMetricNames: Unit = {
     println(s"${nMetrics} Metrics")
     (0 until nMetrics).foreach { idx => println(names(idx))}
@@ -84,7 +81,7 @@ class MemoryMonitor(val args: MemoryMonitorArgs) {
   }
 
   def showSnapshot(mem: MemorySnapshot): Unit = {
-    println(s"Mem usage at ${dateFormat.format(mem.time)}")
+    println(s"Mem usage at ${MemoryMonitor.dateFormat.format(mem.time)}")
     println("===============")
     // TODO headers for each getter?
     (0 until nMetrics).foreach { idx =>
@@ -103,7 +100,7 @@ class MemoryMonitor(val args: MemoryMonitorArgs) {
   }
 
   def showUpdates(time: Long, peakMemory: MemoryPeaks, updates: PeakUpdate): Unit = {
-    println(s"Peak Memory updates:${dateFormat.format(time)}")
+    println(s"Peak Memory updates:${MemoryMonitor.dateFormat.format(time)}")
     (0 until updates.nUpdates).foreach { updateIdx =>
       val metricIdx = updates.updateIdx(updateIdx)
       val name = names(metricIdx)
@@ -115,11 +112,11 @@ class MemoryMonitor(val args: MemoryMonitorArgs) {
   }
 
   def showPeaks(time: Long): Unit = {
-    println(s"Peak Memory usage so far ${dateFormat.format(time)}")
+    println(s"Peak Memory usage so far ${MemoryMonitor.dateFormat.format(time)}")
     // TODO headers for each getter?
     (0 until nMetrics).foreach { idx =>
       println(names(idx) + "\t:" + MemoryMonitor.bytesToString(peakMemoryUsage.values(idx)) +
-        "\t\t\t\t" + dateFormat.format(peakMemoryUsage.peakTimes(idx)))
+        "\t\t\t\t" + MemoryMonitor.dateFormat.format(peakMemoryUsage.peakTimes(idx)))
     }
   }
 
@@ -131,15 +128,7 @@ class MemoryMonitor(val args: MemoryMonitorArgs) {
     val threads = lastThreadDump.get()
     if (threads != null) {
       println("last thread dump:")
-      threads.foreach { t =>
-        if (t == null) {
-          println("<null thread>")
-        } else {
-          println(t.getThreadId + " " + t.getThreadName + " " + t.getThreadState)
-          t.getStackTrace.foreach { elem => println("\t" + elem) }
-          println()
-        }
-      }
+      MemoryMonitor.showThreadDump(threads)
     }
   }
 
@@ -189,6 +178,8 @@ class MemoryMonitor(val args: MemoryMonitorArgs) {
 }
 
 object MemoryMonitor {
+
+  val dateFormat = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS")
 
   private var monitor: MemoryMonitor = null
   private var shutdownHookInstalled = false
@@ -323,6 +314,17 @@ object MemoryMonitor {
     ManagementFactory.getThreadMXBean.dumpAllThreads(false, false)
   }
 
+  def showThreadDump(threads: Array[ThreadInfo]): Unit = {
+    threads.foreach { t =>
+      if (t == null) {
+        println("<null thread>")
+      } else {
+        println(t.getThreadId + " " + t.getThreadName + " " + t.getThreadState)
+        t.getStackTrace.foreach { elem => println("\t" + elem) }
+        println()
+      }
+    }
+  }
 }
 
 
@@ -400,11 +402,53 @@ class MemoryMonitorExecutorExtension extends ExecutorPlugin {
   MemoryMonitor.installIfSysProps()
   val args = MemoryMonitorArgs.sysPropsArgs
 
-  override def taskStart(taskContext: TaskContext): Unit = {}
+  val monitoredTaskCount = new AtomicInteger(0)
 
-  override def onTaskFailure(context: TaskContext, error: Throwable): Unit = {}
+  val scheduler = if (args.stagesToPoll != null && args.stagesToPoll.nonEmpty) {
+    // TODO share polling executors?
+    new ScheduledThreadPoolExecutor(1, new ThreadFactory {
+      override def newThread(r: Runnable): Thread = {
+        val t = new Thread(r, "thread-dump poll thread")
+        t.setDaemon(true)
+        t
+      }
+    })
+  } else {
+    null
+  }
+  val pollingTask = new AtomicReference[ScheduledFuture[_]]()
 
-  override def onTaskCompletion(context: TaskContext): Unit = {}
+  override def taskStart(taskContext: TaskContext): Unit = {
+    if (args.stagesToPoll.contains(taskContext.stageId())) {
+      if (monitoredTaskCount.getAndIncrement() == 0) {
+        // TODO schedule thread polling
+        val task = scheduler.scheduleWithFixedDelay(new Runnable {
+          override def run(): Unit = {
+            val d = MemoryMonitor.dateFormat.format(System.currentTimeMillis())
+            println(s"Polled thread dump @ $d")
+            MemoryMonitor.showThreadDump(MemoryMonitor.getThreadInfo)
+          }
+        }, 0, args.threadDumpFreqMillis, TimeUnit.MILLISECONDS)
+        pollingTask.set(task)
+      }
+    }
+  }
+
+  override def onTaskFailure(context: TaskContext, error: Throwable): Unit = {
+    removeActiveTask(context)
+  }
+
+  override def onTaskCompletion(context: TaskContext): Unit = {
+    removeActiveTask(context)
+  }
+
+  private def removeActiveTask(context: TaskContext): Unit = {
+    if (args.stagesToPoll.contains(context.stageId())) {
+      if (monitoredTaskCount.decrementAndGet() == 0) {
+        pollingTask.get().cancel(false)
+      }
+    }
+  }
 }
 
 class MemoryMonitorArgs extends FieldArgs {
@@ -417,6 +461,8 @@ class MemoryMonitorArgs extends FieldArgs {
 
   var threadDumpFreqMillis: Int = 1000
   var threadDumpEnabled = false
+
+  var verbose = false
 }
 
 object MemoryMonitorArgs {
