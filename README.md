@@ -10,19 +10,19 @@ Include that jar in your spark application.  You could bundle it directly, or ju
 
 The monitoring is configured via java system properties:
 
-* "memory.monitor.enabled" -- if its set, enable monitoring (regardless of value)
+* "memory.monitor.enabled=true" -- if its set, enable monitoring (regardless of value)
 * "memory.monitor.freq=[millis]" -- set the frequency of polling used to detect peaks, in millis
 
 So a typical invocation might look like:
 
 ```
 spark-submit \
- ...
- --jars spark-memory-core_2.11-0.1.0-SNAPSHOT-jar-with-dependencies.jar \
- --driver-java-options "-XX:MaxMetaspaceSize=200M -XX:+PrintGCDetails -Dmemory.monitor.enabled -Dmemory.monitor.freq=100" \
- --conf spark.executor.extraJavaOptions="-XX:MaxMetaspaceSize=200M -XX:+PrintGCDetails -Dmemory.monitor.enabled -Dmemory.monitor.freq=100" \
+  ...
+  --jars spark-memory-core_2.11-0.1.0-SNAPSHOT-jar-with-dependencies.jar \
+  --driver-java-options "-XX:MaxMetaspaceSize=200M -XX:+PrintGCDetails -Dmemory.monitor.enabled=true -Dmemory.monitor.freq=100" \
+  --conf spark.executor.extraJavaOptions="-XX:MaxMetaspaceSize=200M -XX:+PrintGCDetails -Dmemory.monitor.enabled=true -Dmemory.monitor.freq=100" \
   --conf spark.executor.plugins="com.cloudera.spark.MemoryMonitorExecutorExtension" \
- ...
+  ...
 ```
 
 This includes the Dynamic Allocation "plugin" (see below) -- note that requires a patched spark and the api may change.
