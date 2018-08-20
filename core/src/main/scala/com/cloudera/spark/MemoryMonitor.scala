@@ -476,6 +476,8 @@ object MemoryMonitorArgs {
     })
     if (args.stagesToPoll != null && args.stagesToPoll.nonEmpty) {
       System.out.println(s"will poll thread dumps for stages ${args.stagesToPoll.mkString(",")}")
+    } else {
+      args.stagesToPoll = Array()
     }
     args
   }
