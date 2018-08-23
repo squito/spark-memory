@@ -340,14 +340,14 @@ case object Always extends PeakReporting {
 case object IncrementBytes extends PeakReporting {
   override def report(orig: Long, update: Long): Boolean = {
     val delta = update - orig
-    delta > 1e7.toInt && (delta.toDouble / orig) > 1.05
+    delta > 1e7.toInt && (update.toDouble / orig) > 1.05
   }
 }
 
 case object IncrementCounts extends PeakReporting {
   override def report(orig: Long, update: Long): Boolean = {
     val delta = update - orig
-    delta > 100.toInt && (delta.toDouble / orig) > 1.05
+    delta > 100 && (update.toDouble / orig) > 1.05
   }
 }
 
