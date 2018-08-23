@@ -81,7 +81,7 @@ class SparkNettyMemoryHandle(
 
 object SparkNettyMemoryHandle {
 
-  def get(displayError: Boolean = false): Option[SparkNettyMemoryHandle] = try {
+  def get(displayError: Boolean = false): Option[SparkNettyMemoryHandle] = {
     Option(SparkEnv.get).map { env =>
       new SparkNettyMemoryHandle(
         getRpcClientPooledAllocator(env).metric,
