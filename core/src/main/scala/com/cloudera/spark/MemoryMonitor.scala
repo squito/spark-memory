@@ -13,7 +13,8 @@ import scala.collection.JavaConverters._
 import com.quantifind.sumac.FieldArgs
 
 import org.apache.spark.{TaskContext, SparkContext}
-import org.apache.spark.executor.ExecutorPlugin
+import org.apache.spark.ExecutorPlugin
+import org.apache.spark.executor.ProcfsBasedMetrics
 import org.apache.spark.memory.SparkMemoryManagerHandle
 
 class MemoryMonitor(val args: MemoryMonitorArgs) {
@@ -37,7 +38,8 @@ class MemoryMonitor(val args: MemoryMonitorArgs) {
       offHeapPoolBeans.map(new PoolGetter(_)) ++
       bufferPoolsBeans.map(new BufferPoolGetter(_)) ++
       nettyMemoryHandle.toSeq ++
-      sparkMemManagerHandle.toSeq
+      sparkMemManagerHandle.toSeq ++
+      Seq(new ProcfsBasedMetricsGetter)
 
   val namesAndReporting = getters.flatMap(_.namesAndReporting)
   val names = namesAndReporting.map(_._1)
@@ -328,9 +330,10 @@ object MemoryMonitor {
 }
 
 class MemoryMonitorExecutorExtension extends ExecutorPlugin {
-  // the "extension class" api just lets you invoke a constructor.  We really just want to
-  // call this static method, so that's good enough.
+  // Each Spark executor will create an instance of this plugin. When this class
+  // is instantiated, this static method is called, which is good enough for us.
   MemoryMonitor.installIfSysProps()
+  /*
   val args = MemoryMonitorArgs.sysPropsArgs
 
   val monitoredTaskCount = new AtomicInteger(0)
@@ -347,6 +350,7 @@ class MemoryMonitorExecutorExtension extends ExecutorPlugin {
   } else {
     null
   }
+
   val pollingTask = new AtomicReference[ScheduledFuture[_]]()
 
   override def taskStart(taskContext: TaskContext): Unit = {
@@ -380,6 +384,7 @@ class MemoryMonitorExecutorExtension extends ExecutorPlugin {
       }
     }
   }
+  */
 }
 
 class MemoryMonitorArgs extends FieldArgs {
