@@ -7,9 +7,10 @@ sealed trait PeakReporting {
 case object Never extends PeakReporting {
   override def report(orig: Long, update: Long): Boolean = false
 }
-case object Always extends PeakReporting {
+case object AllIncrements extends PeakReporting {
   override def report(orig: Long, update: Long): Boolean = update > orig
 }
+
 case object IncrementBytes extends PeakReporting {
   override def report(orig: Long, update: Long): Boolean = {
     val delta = update - orig

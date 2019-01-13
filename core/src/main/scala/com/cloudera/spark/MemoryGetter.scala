@@ -13,7 +13,7 @@ trait MemoryGetter {
 class MemoryMxBeanGetter(bean: MemoryMXBean) extends MemoryGetter {
   val namesAndReporting: Seq[(String, PeakReporting)] = for {
     source <- Seq("heap", "offheap")
-    usage <- Seq(("used", IncrementBytes), ("committed", Always))
+    usage <- Seq(("used", IncrementBytes), ("committed", AllIncrements))
   } yield {
     (source + ":" + usage._1, usage._2)
   }
@@ -29,8 +29,8 @@ class MemoryMxBeanGetter(bean: MemoryMXBean) extends MemoryGetter {
 
 class PoolGetter(bean: MemoryPoolMXBean) extends MemoryGetter {
   val namesAndReporting: Seq[(String, PeakReporting)] =
-    Seq(("used", IncrementBytes), ("committed", Always)).map { case (n, r) =>
-      (bean.getName() + n, r)
+    Seq(("used", IncrementBytes), ("committed", AllIncrements)).map { case (n, r) =>
+      (bean.getName() + ":" + n, r)
     }
   def values(dest: Array[Long], offset: Int): Unit = {
     // there are actually a bunch more things here I *could* get ...
@@ -50,13 +50,13 @@ class BufferPoolGetter(bean: BufferPoolMXBean) extends MemoryGetter {
   }
 }
 
-class ProcfsBasedMetricsGetter extends MemoryGetter {
+class ProcfsBasedMetricsGetter(pid: Int) extends MemoryGetter {
   // TODO: PAGESIZE should be obtained from the system.
   // This should be done in ProcfsBasedMetrics. In which case, the RSS numbers
   // will be converted to bytes there, and no conversion will be needed here.
   final val PAGESIZE = 4096L
 
-  val pTreeInfo = new ProcfsBasedMetrics
+  val pTreeInfo = new ProcfsBasedMetrics(pid)
 
   val namesAndReporting = Seq(
     ("jvmrssmem", IncrementBytes),

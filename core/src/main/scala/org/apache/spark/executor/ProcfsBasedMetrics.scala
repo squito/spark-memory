@@ -35,11 +35,10 @@ case class MemoryUsage(
   val otherRSSTotal: Long,
   val otherVmemTotal: Long)
 
-class ProcfsBasedMetrics extends Logging {
+class ProcfsBasedMetrics(pid: Int) extends Logging {
 
   val PROCFS_DIR = "/proc"
   var isAvailable: Boolean = isProcfsFound
-  val pid: Int = computePid()
   val ptree: scala.collection.mutable.Map[Int, Set[Int]] =
     scala.collection.mutable.Map[Int, Set[Int]]()
   val PROCFS_STAT_FILE = "stat"
@@ -63,26 +62,6 @@ class ProcfsBasedMetrics extends Logging {
     true
   }
 
-  def computePid(): Int = {
-    if (!isAvailable) {
-      return -1;
-    }
-    try {
-      // This can be simplified in java9:
-      // https://docs.oracle.com/javase/9/docs/api/java/lang/ProcessHandle.html
-      val cmd = Array("bash", "-c", "echo $PPID")
-      val length = 10
-      var out: Array[Byte] = Array.fill[Byte](length)(0)
-      Runtime.getRuntime.exec(cmd).getInputStream.read(out)
-      val pid = Integer.parseInt(new String(out, "UTF-8").trim)
-      pid;
-    } catch {
-      case NonFatal(e) => logDebug("An error occurred when trying to compute the process tree. " +
-          "As a result, reporting of process tree metrics is stopped.")
-        isAvailable = false
-        -1
-    }
-  }
 
   def createProcessTree(): Unit = {
     if (!isAvailable) {

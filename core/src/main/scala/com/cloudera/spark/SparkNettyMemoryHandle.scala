@@ -30,9 +30,9 @@ class SparkNettyMemoryHandle(
   val poolMetrics = Seq(
     ("usedHeapMem", IncrementBytes),
     ("usedDirectMem", IncrementBytes),
-    ("numHeapArenas", Always),
-    ("numDirectArenas", Always),
-    ("numThreadLocalCaches", Always))
+    ("numHeapArenas", AllIncrements),
+    ("numDirectArenas", AllIncrements),
+    ("numThreadLocalCaches", AllIncrements))
 
   val allPooledMetrics = poolMetrics ++ SparkNettyMemoryHandle.VERBOSE_METRICS ++
     Seq(("directAllocatedUnused", IncrementBytes), ("heapAllocationUnused", IncrementBytes))
@@ -65,8 +65,10 @@ class SparkNettyMemoryHandle(
       dest(offset + 2) = pool.numHeapArenas()
       dest(offset + 3) = pool.numDirectArenas()
       dest(offset + 4) = pool.numThreadLocalCaches()
-      // TODO more from heap arenas?
+      // get active and unused bytes from the direct arenas
       SparkNettyMemoryHandle.getArenaMetrics(pool.directArenas().asScala, dest, offset + 5)
+      // from the onheap arenas, just get the unused bytes (this arena isn't as important, so not
+      // bothering with active bytes count)
       dest(offset + allPooledMetrics.length - 1) =
         SparkNettyMemoryHandle.poolArenaFreeBytes(pool.heapArenas().asScala)
       offset += allPooledMetrics.length
@@ -158,23 +160,7 @@ object SparkNettyMemoryHandle {
 
   }
 
-  val VERBOSE_METRICS = Seq(
-    "numAllocations",
-    "numTinyAllocations",
-    "numSmallAllocations",
-    "numNormalAllocations",
-    "numHugeAllocations",
-    "numDeallocations",
-    "numTinyDeallocations",
-    "numSmallDeallocations",
-    "numNormalDeallocations",
-    "numHugeDeallocations",
-    "numActiveAllocations",
-    "numActiveTinyAllocations",
-    "numActiveSmallAllocations",
-    "numActiveNormalAllocations",
-    "numActiveHugeAllocations"
-  ).map((_, IncrementCounts)) ++ Seq(("numActiveBytes", IncrementBytes))
+  val VERBOSE_METRICS = Seq(("numActiveBytes", IncrementBytes))
 
   val metricMethods = VERBOSE_METRICS.flatMap { case (methodName, _) =>
     val m = classOf[PoolArenaMetric].getMethod(methodName)

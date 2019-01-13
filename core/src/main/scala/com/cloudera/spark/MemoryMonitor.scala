@@ -5,17 +5,20 @@ import java.lang.management._
 import java.math.{RoundingMode, MathContext}
 import java.text.SimpleDateFormat
 import java.util.Locale
-import java.util.concurrent.atomic.{AtomicInteger, AtomicBoolean, AtomicReference}
+import java.util.concurrent.atomic.{AtomicBoolean, AtomicReference}
 import java.util.concurrent._
+
+import org.apache.spark.internal.Logging
 
 import scala.collection.JavaConverters._
 
 import com.quantifind.sumac.FieldArgs
 
-import org.apache.spark.{TaskContext, SparkContext}
+import org.apache.spark.SparkContext
 import org.apache.spark.ExecutorPlugin
-import org.apache.spark.executor.ProcfsBasedMetrics
 import org.apache.spark.memory.SparkMemoryManagerHandle
+
+import scala.util.control.NonFatal
 
 class MemoryMonitor(val args: MemoryMonitorArgs) {
   val nettyMemoryHandle = SparkNettyMemoryHandle.get()
@@ -29,6 +32,8 @@ class MemoryMonitor(val args: MemoryMonitorArgs) {
   val memMgrBeans = ManagementFactory.getMemoryManagerMXBeans.asScala
   val bufferPoolsBeans = ManagementFactory.getPlatformMXBeans(classOf[BufferPoolMXBean]).asScala
 
+  val pid = MemoryMonitor.computePid()
+
 
   // TODO usageThresholds & collection usage thresholds
   // with that setup maybe I'd even just do this for every pool, not just offheap pools
@@ -39,7 +44,7 @@ class MemoryMonitor(val args: MemoryMonitorArgs) {
       bufferPoolsBeans.map(new BufferPoolGetter(_)) ++
       nettyMemoryHandle.toSeq ++
       sparkMemManagerHandle.toSeq ++
-      Seq(new ProcfsBasedMetricsGetter)
+      Seq(new ProcfsBasedMetricsGetter(pid))
 
   val namesAndReporting = getters.flatMap(_.namesAndReporting)
   val names = namesAndReporting.map(_._1)
@@ -83,12 +88,11 @@ class MemoryMonitor(val args: MemoryMonitorArgs) {
   }
 
   def showSnapshot(mem: MemorySnapshot): Unit = {
-    println(s"Mem usage at ${MemoryMonitor.dateFormat.format(mem.time)}")
-    println("===============")
-    // TODO headers for each getter?
+    println(s"${args.memLogPrefix}Mem usage at ${MemoryMonitor.dateFormat.format(mem.time)}")
+    println(s"${args.memLogPrefix}===============")
     (0 until nMetrics).foreach { idx =>
       val v = mem.values(idx)
-      println(names(idx) + "\t:" + MemoryMonitor.bytesToString(v) + "(" + v + ")")
+      println(args.memLogPrefix + names(idx) + "\t:" + MemoryMonitor.bytesToString(v) + "(" + v + ")")
     }
     println()
     println()
@@ -179,7 +183,7 @@ class MemoryMonitor(val args: MemoryMonitorArgs) {
   }
 }
 
-object MemoryMonitor {
+object MemoryMonitor extends Logging {
 
   val dateFormat = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS")
 
@@ -250,28 +254,6 @@ object MemoryMonitor {
     }
   }
 
-  def installOnExecIfStaticAllocation(sc: SparkContext): Unit = {
-    if (!SparkMemoryManagerHandle.isDynamicAllocation(sc)) {
-      installOnExecutors(sc)
-    } else {
-      println ("********* WARNING ***** not installing on executors because of DA")
-    }
-  }
-
-  def installOnExecutors(sc: SparkContext, numTasks: Int = -1, sleep: Long = 1): Unit = {
-    assert(!SparkMemoryManagerHandle.isDynamicAllocation(sc))
-    val t = if (numTasks == -1) {
-      sc.getExecutorMemoryStatus.size * 2
-    } else {
-      numTasks
-    }
-    println(s"Running $t tasks to install memory monitor on executors")
-    sc.parallelize(1 to t, t).foreach { _ =>
-      Thread.sleep(sleep)
-      installIfSysProps()
-    }
-  }
-
   /**
     * Convert a quantity in bytes to a human-readable string such as "4.0 MB".
     */
@@ -325,6 +307,23 @@ object MemoryMonitor {
         t.getStackTrace.foreach { elem => println("\t" + elem) }
         println()
       }
+    }
+  }
+
+  def computePid(): Int = {
+    try {
+      // This can be simplified in java9:
+      // https://docs.oracle.com/javase/9/docs/api/java/lang/ProcessHandle.html
+      val cmd = Array("bash", "-c", "echo $PPID")
+      val length = 10
+      var out: Array[Byte] = Array.fill[Byte](length)(0)
+      Runtime.getRuntime.exec(cmd).getInputStream.read(out)
+      val pid = Integer.parseInt(new String(out, "UTF-8").trim)
+      pid;
+    } catch {
+      case NonFatal(e) => logDebug("An error occurred when trying to compute the process tree. " +
+          "As a result, reporting of process tree metrics is stopped.")
+        -1
     }
   }
 }
@@ -399,6 +398,9 @@ class MemoryMonitorArgs extends FieldArgs {
   var threadDumpEnabled = false
 
   var verbose = false
+
+  var memLogPrefix = "MEM:"
+  var dtraceLogPrefix = "DTRACE:"
 }
 
 object MemoryMonitorArgs {
