@@ -59,12 +59,14 @@ class ProcfsBasedMetricsGetter(pid: Int) extends MemoryGetter {
   val pTreeInfo = new ProcfsBasedMetrics(pid)
 
   val namesAndReporting = Seq(
-    ("jvmrssmem", IncrementBytes),
-    ("jvmvmem", IncrementBytes),
-    ("pythonrssmem", IncrementBytes),
-    ("pythonvmem", IncrementBytes),
-    ("otherrssmem", IncrementBytes),
-    ("othervmem", IncrementBytes)
+    ("jvm:rss", IncrementBytes),
+    ("jvm:vmem", IncrementBytes),
+    ("python:rss", IncrementBytes),
+    ("python:vmem", IncrementBytes),
+    ("other:rss", IncrementBytes),
+    ("other:vmem", IncrementBytes),
+    ("total:rss", IncrementBytes),
+    ("total:vmem", IncrementBytes)
   )
 
   def values(dest: Array[Long], offset: Int): Unit = {
@@ -76,6 +78,8 @@ class ProcfsBasedMetricsGetter(pid: Int) extends MemoryGetter {
       dest(offset + 3) = memInfo.pythonVmemTotal
       dest(offset + 4) = memInfo.otherRSSTotal * PAGESIZE
       dest(offset + 5) = memInfo.otherVmemTotal
+      dest(offset + 6) = dest(offset) + dest(offset + 2) + dest(offset + 4)
+      dest(offset + 7) = dest(offset + 1) + dest(offset + 3) + dest(offset + 5)
     }
   }
 }

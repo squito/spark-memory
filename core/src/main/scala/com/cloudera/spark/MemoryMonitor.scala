@@ -110,9 +110,12 @@ class MemoryMonitor(val args: MemoryMonitorArgs) {
     (0 until updates.nUpdates).foreach { updateIdx =>
       val metricIdx = updates.updateIdx(updateIdx)
       val name = names(metricIdx)
-      val currentVal = MemoryMonitor.bytesToString(peakMemoryUsage.values(metricIdx))
+      def fmt(raw: Long): String = {
+        if (args.prettyBytes) MemoryMonitor.bytesToString(raw) else raw.toString
+      }
+      val currentVal = fmt(peakMemoryUsage.values(metricIdx))
       val rawDelta = updates.delta(updateIdx)
-      val delta = (if (rawDelta > 0) "+" else "-") + MemoryMonitor.bytesToString(rawDelta)
+      val delta = (if (rawDelta > 0) "+" else "-") + fmt(rawDelta)
       println(s"$name\t:\t$currentVal ($delta)")
     }
   }
@@ -398,6 +401,8 @@ class MemoryMonitorArgs extends FieldArgs {
   var threadDumpEnabled = false
 
   var verbose = false
+
+  var prettyBytes = false
 
   var memLogPrefix = "MEM:"
   var dtraceLogPrefix = "DTRACE:"
