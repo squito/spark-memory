@@ -327,7 +327,7 @@ object MemoryMonitor {
   }
 }
 
-class MemoryMonitorExecutorExtension extends ExecutorPlugin {
+class MemoryMonitorExecutorExtension extends ExecutorPlugin with org.apache.spark.ExecutorPlugin {
   // the "extension class" api just lets you invoke a constructor.  We really just want to
   // call this static method, so that's good enough.
   MemoryMonitor.installIfSysProps()

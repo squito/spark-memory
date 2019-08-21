@@ -1,7 +1,6 @@
 package org.apache.spark.memory
 
 import com.cloudera.spark.{Reflector, IncrementBytes, MemoryGetter}
-import org.apache.spark.util.{Utils, ThreadStackTrace}
 import org.apache.spark.{SparkContext, SparkEnv}
 
 class SparkMemoryManagerHandle(
