@@ -1,10 +1,22 @@
 Spark Memory Monitor
 ========================
+Intro
+----------
+Memory management is a complicated system in spark that often times leads to confusing and difficult to diagnose problems.  Typically the user gets anerror message that shows that YARN has killed an executor for exceeding physical memory limits but gives no insight into why that is.  Further more the typical tools used to investigate java memory use are ineffective due to the extensive use of off-heap memory use in spark.   This results in a portition of the process memory being “unaccounted for”. spark-memory is a tool to provide insight into the parts of the code that are not typically visible giving insight into the max memory use.
 
-Usage
+> ExecutorLostFailure (executor 19 exited caused by one of the running tasks) Reason: Container killed by YARN for exceeding memory limits. 5.6 GB of 5.5 GB physical memory used. Consider boosting spark.yarn.executor.memoryOverhead or disabling yarn.nodemanager.vmem-check-enabled because of YARN-4714.
+
+Example yarn error message
+
+
+Building spark-memory
 -----------
 
 Build with `mvn package`, `sbt`, etc.
+
+
+Modifying spark-submit to use spark-memory
+-----------
 
 Include that jar in your spark application.  You could bundle it directly, or just include it with `--jars`.
 
